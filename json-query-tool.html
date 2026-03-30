@@ -1034,17 +1034,29 @@ function evalJSONPath(obj, path) {
 
   // ======== 转义处理工具函数 ========
   // 解析条件表达式: @.key=="value" 或 @.key==123 或 @.key==true
+  // 支持嵌套路径: @.data.pagerows==20
   function matchCondition(item, condStr) {
     // 支持多个条件：@.a=="x" && @.b=="y"
     const andParts = condStr.split(/\s*&&\s*/);
     return andParts.every(cond => {
-      // 匹配 @.key == value 格式
-      const m = cond.trim().match(/^@\.([\w]+)\s*==\s*(.+)$/) ||
+      // 匹配 @.key == value 格式（支持嵌套路径）
+      const m = cond.trim().match(/^@\.([\w.]+)\s*==\s*(.+)$/) ||
                 cond.trim().match(/^@\['([^']+)'\]\s*==\s*(.+)$/);
       if (!m) return false;
-      const key = m[1];
+      const keyPath = m[1];
       let expected = m[2].trim();
-      const actual = item == null ? undefined : item[key];
+
+      // 支持嵌套路径，如 data.pagerows
+      const keys = keyPath.split('.');
+      let actual = item;
+      for (const k of keys) {
+        if (actual == null || typeof actual !== 'object') {
+          actual = undefined;
+          break;
+        }
+        actual = actual[k];
+      }
+
       // 解析期望值类型
       if (expected === 'true')  return actual === true;
       if (expected === 'false') return actual === false;
