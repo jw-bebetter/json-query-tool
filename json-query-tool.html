@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JSONPATH查询</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f0f2f5;
+    color: #333;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    padding: 14px 0;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    flex-shrink: 0;
+  }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .main { flex: 1; display: flex; overflow: hidden; }
+
+  .panel-left {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-right: 1px solid #e8e8e8;
+    min-width: 0;
+    transition: width 0.2s;
+  }
+  /* 树形视图打开时左面板变窄 */
+  .tree-panel.active ~ .panel-left {
+    width: calc(65% - 35%);
+  }
+  .main.tree-open .panel-left {
+    width: 32%;
+  }
+  .main.tree-open .panel-right {
+    width: 33%;
+  }
+  .btn-bar {
+    display: flex;
+    gap: 6px;
+    padding: 10px 16px;
+    align-items: center;
+    flex-shrink: 0;
+    background: #fafafa;
+    border-bottom: 1px solid #f0f0f0;
+    flex-wrap: wrap;
+  }
+  button {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 5px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-secondary { background: #f0f0f0; color: #555; }
+  .btn-secondary:hover { background: #e0e0e0; }
+  .status-msg {
+    padding: 4px 8px; border-radius: 4px; font-size: 12px;
+    display: none; align-items: center; gap: 4px;
+    margin-left: auto;
+    white-space: normal;
+    max-width: 100%;
+    word-break: break-all;
+    flex-basis: 100%;
+    margin-top: 4px;
+  }
+  .status-msg.success { display: flex; background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
+  .status-msg.error { display: flex; background: #fff2f0; color: #cf1322; border: 1px solid #ffa39e; }
+  #jsonInput {
+    flex: 1; width: 100%; border: none; padding: 14px 20px;
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 13px; resize: none; outline: none; line-height: 1.7; tab-size: 2;
+  }
+
+  .panel-right {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .search-section {
+    padding: 12px 20px;
+    background: #fff;
+    border-bottom: 1px solid #f0f0f0;
+    flex-shrink: 0;
+  }
+  .search-row {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .search-row input {
+    flex: 1; padding: 7px 12px; border: 1px solid #d9d9d9;
+    border-radius: 5px; font-size: 13px; outline: none;
+  }
+  .search-row input:focus {
+    border-color: #667eea; box-shadow: 0 0 0 2px rgba(102,126,234,0.15);
+  }
+  .search-label {
+    font-size: 12px; color: #888; white-space: nowrap; font-weight: 500;
+  }
+
+  .condition-area {
+    display: none; flex-direction: column; gap: 8px;
+    margin-top: 12px; padding-top: 12px; border-top: 1px dashed #e0e0e0;
+  }
+  .condition-area.active { display: flex; }
+  .condition-hint {
+    font-size: 12px; color: #e8a000; background: #fffbe6;
+    border: 1px solid #ffe58f; border-radius: 5px; padding: 8px 12px; line-height: 1.5;
+  }
+  .condition-row {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .condition-row select, .condition-row input {
+    padding: 6px 10px; border: 1px solid #d9d9d9;
+    border-radius: 5px; font-size: 13px; outline: none;
+  }
+  .condition-row select:focus, .condition-row input:focus { border-color: #667eea; }
+  .condition-row select { min-width: 130px; }
+  .condition-row input { flex: 1; }
+  .remove-cond {
+    padding: 2px 8px; font-size: 18px; background: none;
+    color: #ccc; cursor: pointer; line-height: 1;
+  }
+  .remove-cond:hover { color: #ff4d4f; }
+  .cond-btns { display: flex; gap: 8px; margin-top: 4px; }
+  .add-cond-btn {
+    padding: 4px 14px; font-size: 12px; background: #fff;
+    color: #667eea; border: 1px dashed #667eea; border-radius: 4px; cursor: pointer;
+  }
+  .add-cond-btn:hover { background: #f5f3ff; }
+
+  .value-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .value-tag {
+    padding: 2px 10px; font-size: 12px; background: #f5f5f5;
+    border: 1px solid #d9d9d9; border-radius: 4px; cursor: pointer;
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    transition: all 0.15s;
+  }
+  .value-tag:hover { background: #f0f0ff; border-color: #667eea; color: #667eea; }
+  .value-tag.selected { background: #667eea; color: #fff; border-color: #667eea; }
+
+  .result-scroll {
+    flex: 1; overflow-y: auto; padding: 16px 20px; background: #f7f8fa;
+  }
+  .result-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #555; }
+  .jsonpath-output {
+    padding: 16px; background: #fff; border: 1px solid #e8e8e8;
+    border-radius: 8px; margin-bottom: 12px;
+  }
+  .jsonpath-output .label { font-size: 11px; color: #999; margin-bottom: 4px; }
+  .jsonpath-output .path-text {
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 14px; color: #667eea; font-weight: 600; word-break: break-all;
+    padding: 10px 14px; background: #f5f3ff; border-radius: 6px;
+    margin-bottom: 10px; border: 1px solid #e0dcf7;
+  }
+  .copy-btn {
+    padding: 4px 14px; font-size: 12px; background: #667eea;
+    color: #fff; border-radius: 4px;
+  }
+  .copy-btn:hover { background: #5a6fd6; }
+  .match-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .match-item {
+    padding: 10px 14px; background: #fff; border: 1px solid #e8e8e8;
+    border-radius: 6px; font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 12px; line-height: 1.6; transition: all 0.15s;
+  }
+  .match-item:hover { border-color: #c0c0ff; }
+  .no-result {
+    padding: 16px; background: #fffbe6; border: 1px solid #ffe58f;
+    border-radius: 8px; color: #ad8b00; font-size: 14px;
+  }
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; height: 100%; color: #bbb; font-size: 14px; gap: 8px;
+  }
+  .empty-state .big-icon { font-size: 48px; opacity: 0.4; }
+
+  /* 树形视图样式 */
+  .tree-panel {
+    display: none;
+    width: 35%;
+    background: #fff;
+    border-right: 1px solid #e8e8e8;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .tree-panel.active { display: flex; }
+  .tree-header {
+    padding: 10px 16px;
+    background: #fafafa;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .tree-content {
+    flex: 1;
+    overflow: auto;
+    padding: 12px;
+  }
+  .tree-node {
+    margin-left: 20px;
+    position: relative;
+  }
+  .tree-node-root { margin-left: 0; }
+  .tree-item {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 13px;
+  }
+  .tree-item:hover { background: #f0f0ff; }
+  .tree-item.selected { background: #667eea; color: #fff; }
+  .tree-item.selected .tree-key { color: #fff; }
+  .tree-item.selected .tree-value { color: #e0e0e0; }
+  .tree-toggle {
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin-right: 4px;
+    font-size: 10px;
+    color: #999;
+    transition: transform 0.2s;
+  }
+  .tree-toggle.expanded { transform: rotate(90deg); }
+  .tree-toggle.leaf { visibility: hidden; }
+  .tree-key { color: #667eea; font-weight: 500; }
+  .tree-value { color: #666; margin-left: 4px; }
+  .tree-value.string { color: #c41a16; }
+  .tree-value.number { color: #1c00cf; }
+  .tree-value.boolean { color: #aa0d91; }
+  .tree-value.null { color: #999; }
+  .tree-bracket { color: #888; }
+  .tree-path-bar {
+    padding: 8px 16px;
+    background: #f5f3ff;
+    border-bottom: 1px solid #e0dcf7;
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 12px;
+    color: #667eea;
+    word-break: break-all;
+  }
+
+  /* 反向查询样式 */
+  .reverse-search {
+    display: none;
+    padding: 12px 20px;
+    background: #fff;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .reverse-search.active { display: block; }
+  .reverse-search-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+  }
+  .reverse-search-row input {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 12px;
+    border: 1px solid #d9d9d9;
+    border-radius: 5px;
+    font-size: 13px;
+    outline: none;
+  }
+  .reverse-search-row input:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102,126,234,0.15);
+  }
+  .reverse-search-row .search-label {
+    flex-shrink: 0;
+  }
+  .reverse-result {
+    margin-top: 12px;
+    padding: 12px;
+    background: #f6ffed;
+    border: 1px solid #b7eb8f;
+    border-radius: 6px;
+  }
+  .reverse-result.error {
+    background: #fff2f0;
+    border-color: #ffa39e;
+  }
+  .reverse-result-title {
+    font-size: 12px;
+    color: #389e0d;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+  .reverse-result.error .reverse-result-title { color: #cf1322; }
+  .highlighted-value {
+    background: #ffe58f;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+
+  /* Tab 切换 */
+  .search-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 8px 20px 0;
+    background: #fff;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .search-tab {
+    padding: 8px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .search-tab:hover { color: #667eea; }
+  .search-tab.active {
+    color: #667eea;
+    border-bottom-color: #667eea;
+    font-weight: 500;
+  }
+
+  @media (max-width: 768px) {
+    .main { flex-direction: column; }
+    .panel-left, .panel-right { width: 100%; }
+    .panel-left { height: 40%; border-right: none; border-bottom: 1px solid #e8e8e8; }
+    .panel-right { height: 60%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header"><h1>JSONPATH查询</h1></div>
+
+<div class="main">
+  <!-- 树形视图面板 -->
+  <div id="treePanel" class="tree-panel">
+    <div class="tree-header">
+      <span>&#127795; JSON 结构树</span>
+      <button class="btn-secondary" style="padding: 4px 12px; font-size: 12px;" onclick="toggleTree()">关闭</button>
+    </div>
+    <div id="treePathBar" class="tree-path-bar" style="display:none;"></div>
+    <div id="treeContent" class="tree-content"></div>
+  </div>
+
+  <div class="panel-left">
+    <div class="btn-bar">
+      <span style="font-size:13px;font-weight:600;color:#333;white-space:nowrap;">&#128196; JSON</span>
+      <button class="btn-primary" onclick="validateJSON(true)">验证</button>
+      <button class="btn-secondary" onclick="formatJSON()">格式化</button>
+      <button class="btn-secondary" onclick="formatSortedJSON()" title="按key排序">排序</button>
+      <button class="btn-secondary" onclick="compressJSON()">压缩</button>
+      <button class="btn-secondary" onclick="toggleTree()">&#127795; 树形</button>
+      <button class="btn-secondary" onclick="clearAll()">清空</button>
+      <div id="statusMsg" class="status-msg"></div>
+    </div>
+    <textarea id="jsonInput" placeholder="在此粘贴 JSON 文本，或拖放 .json 文件..." spellcheck="false"></textarea>
+  </div>
+
+  <div class="panel-right">
+    <!-- Tab 切换 -->
+    <div class="search-tabs">
+      <div class="search-tab active" onclick="switchTab('value')" id="tabValue">按 Value 查找</div>
+      <div class="search-tab" onclick="switchTab('reverse')" id="tabReverse">反向查询 (JSONPath)</div>
+    </div>
+
+    <!-- 按 Value 查找 -->
+    <div id="valueSearch" class="search-section">
+      <div class="search-row">
+        <span class="search-label">Value:</span>
+        <input type="text" id="searchValue" placeholder="输入要查找的值，例如: fiction 或 12.99" onkeydown="if(event.key==='Enter') doSearch()">
+        <button class="btn-primary" onclick="doSearch()">查询</button>
+      </div>
+      <div id="conditionArea" class="condition-area">
+        <div id="conditionHint" class="condition-hint"></div>
+        <div id="conditionRows"></div>
+        <div class="cond-btns">
+          <button class="add-cond-btn" onclick="addConditionRow()">+ 添加条件</button>
+          <button class="btn-primary" onclick="applyFilter()">生成条件 JSONPath</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 反向查询 -->
+    <div id="reverseSearch" class="reverse-search">
+      <div class="reverse-search-row">
+        <span class="search-label">JSONPath:</span>
+        <input type="text" id="reversePath" placeholder="输入 JSONPath，例如: $.store.book[0].title" onkeydown="if(event.key==='Enter') doReverseSearch()">
+        <button class="btn-primary" onclick="doReverseSearch()">查询</button>
+      </div>
+      <div id="reverseResult" style="display:none;"></div>
+    </div>
+
+    <div class="result-scroll" id="resultArea">
+      <div class="empty-state">
+        <div class="big-icon">&#128270;</div>
+        <div>输入 Value 查询其 JSONPath 路径</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let parsedJSON = null;
+let originalJSON = null; // 保存首次解析的原始对象（保持 key 原始顺序）
+let ctx = { searchVal: '', groups: [], activeGroup: null, siblingKeys: [] };
+
+function showStatus(t, m) {
+  const el = document.getElementById('statusMsg');
+  el.className = 'status-msg ' + t;
+  el.textContent = (t === 'success' ? '\u2705 ' : '\u274C ') + m;
+}
+function clearStatus() {
+  const el = document.getElementById('statusMsg');
+  el.className = 'status-msg'; el.textContent = '';
+}
+function validateJSON(saveOriginal) {
+  clearStatus();
+  const s = document.getElementById('jsonInput').value.trim();
+  if (!s) { showStatus('error', '请输入 JSON 文本'); parsedJSON = null; return false; }
+  try {
+    parsedJSON = JSON.parse(s);
+    if (saveOriginal) originalJSON = parsedJSON;
+    showStatus('success', 'JSON 格式正确');
+    // 如果树形视图已打开，刷新它
+    const treePanel = document.getElementById('treePanel');
+    if (treePanel.classList.contains('active')) {
+      renderTree();
+    }
+    return true;
+  }
+  catch (e) { parsedJSON = null; showStatus('error', 'JSON 格式错误: ' + e.message); return false; }
+}
+function sortKeys(obj) {
+  if (Array.isArray(obj)) return obj.map(sortKeys);
+  if (obj !== null && typeof obj === 'object') {
+    const sorted = {};
+    for (const k of Object.keys(obj).sort()) sorted[k] = sortKeys(obj[k]);
+    return sorted;
+  }
+  return obj;
+}
+function formatJSON() { if (!originalJSON) { if (!validateJSON(true)) return; } document.getElementById('jsonInput').value = JSON.stringify(originalJSON, null, 2); showStatus('success', 'JSON 格式正确'); }
+function formatSortedJSON() { if (!validateJSON()) return; document.getElementById('jsonInput').value = JSON.stringify(sortKeys(parsedJSON), null, 2); }
+function compressJSON() { if (!validateJSON()) return; document.getElementById('jsonInput').value = JSON.stringify(parsedJSON); }
+function clearAll() {
+  document.getElementById('jsonInput').value = '';
+  document.getElementById('searchValue').value = '';
+  document.getElementById('reversePath').value = '';
+  hideConditions();
+  document.getElementById('resultArea').innerHTML =
+    '<div class="empty-state"><div class="big-icon">&#128270;</div><div>输入 Value 查询其 JSONPath 路径</div></div>';
+  document.getElementById('reverseResult').style.display = 'none';
+  document.getElementById('treeContent').innerHTML = '<div style="padding:20px;color:#999;text-align:center;">请先验证 JSON</div>';
+  document.getElementById('treePathBar').style.display = 'none';
+  clearStatus(); parsedJSON = null; originalJSON = null;
+  ctx = { searchVal: '', groups: [], activeGroup: null, siblingKeys: [] };
+  treeExpanded = new Set(['$']);
+  selectedPath = null;
+  // 关闭树形视图
+  document.getElementById('treePanel').classList.remove('active');
+  document.querySelector('.main').classList.remove('tree-open');
+}
+function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function fv(v) {
+  if (v === null) return '<span style="color:#999">null</span>';
+  if (typeof v === 'string') return '<span style="color:#c41a16">"' + escH(v) + '"</span>';
+  if (typeof v === 'number') return '<span style="color:#1c00cf">' + v + '</span>';
+  if (typeof v === 'boolean') return '<span style="color:#aa0d91">' + v + '</span>';
+  if (Array.isArray(v)) return '<span style="color:#888">[Array]</span>';
+  if (typeof v === 'object') return '<span style="color:#888">{Object}</span>';
+  return escH(String(v));
+}
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    const o = btn.textContent; btn.textContent = '\u2705 已复制'; btn.style.background = '#52c41a';
+    setTimeout(() => { btn.textContent = o; btn.style.background = ''; }, 1200);
+  });
+}
+function sk(key) { return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? '.' + key : "['" + key.replace(/'/g, "\\'") + "']"; }
+function ffv(v) {
+  if (v === 'true' || v === 'false') return v;
+  if (!isNaN(Number(v)) && v !== '') return v;
+  return '"' + v.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+}
+function lastKey(p) {
+  const d = p.match(/\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+  if (d) return d[1];
+  const b = p.match(/\['([^']+)'\]$/);
+  if (b) return b[1];
+  return p;
+}
+
+// ======== 按 Value 搜索 ========
+function findByValue(obj, sv, path, parentArrayPath, parentArrayLen) {
+  const r = [];
+  if (obj === null || typeof obj !== 'object') return r;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const p = path + '[' + i + ']';
+      const item = obj[i];
+      if (item !== null && typeof item === 'object') {
+        r.push(...findByValue(item, sv, p, path, obj.length));
+      } else if (item !== null && String(item) === sv) {
+        // 数组内的原始值直接匹配（无对象、无 sibling key）
+        r.push({
+          keyName: null, value: item, fullPath: p,
+          inArray: true, parentArrayPath: path,
+          parentArrayLen: obj.length,
+          siblings: [], arrayIndex: i
+        });
+      }
+    }
+  } else {
+    for (const k of Object.keys(obj)) {
+      const p = path + sk(k);
+      const val = obj[k];
+      if (val !== null && typeof val !== 'object' && String(val) === sv) {
+        // 收集同级所有基本类型属性（排除自身key）
+        const sibs = [];
+        for (const s of Object.keys(obj)) {
+          if (s !== k && obj[s] !== null && typeof obj[s] !== 'object') {
+            sibs.push({ key: s, value: obj[s] });
+          }
+        }
+        r.push({
+          keyName: k, value: val, fullPath: p,
+          inArray: parentArrayPath !== null,
+          parentArrayPath: parentArrayPath,
+          parentArrayLen: parentArrayLen || 0,
+          siblings: sibs
+        });
+      } else if (typeof val === 'object' && val !== null) {
+        r.push(...findByValue(val, sv, p, Array.isArray(val) ? p : parentArrayPath, Array.isArray(val) ? val.length : parentArrayLen));
+      }
+    }
+  }
+  return r;
+}
+
+// ======== 搜索入口 ========
+function doSearch() {
+  const area = document.getElementById('resultArea');
+  const sv = document.getElementById('searchValue').value.trim();
+  hideConditions();
+  ctx = { searchVal: sv, groups: [], activeGroup: null, siblingKeys: [] };
+
+  if (!sv) { area.innerHTML = '<div class="no-result">请输入要查找的 Value</div>'; return; }
+  const raw = document.getElementById('jsonInput').value.trim();
+  if (!raw) { area.innerHTML = '<div class="no-result">请先在左侧输入 JSON 文本</div>'; return; }
+  try { parsedJSON = JSON.parse(raw); }
+  catch (e) { area.innerHTML = '<div class="no-result">JSON 格式错误，请先修正</div>'; return; }
+
+  const matches = findByValue(parsedJSON, sv, '$', null, 0);
+  if (matches.length === 0) {
+    area.innerHTML = '<div class="no-result">未找到 Value: "' + escH(sv) + '"</div>';
+    return;
+  }
+
+  // 分组：不在数组中的 / 在数组中的（按 parentArrayPath 分组）
+  const nonArr = matches.filter(m => !m.inArray);
+  const arrMap = new Map();
+  for (const m of matches.filter(m => m.inArray)) {
+    const gk = m.parentArrayPath;
+    if (!arrMap.has(gk)) arrMap.set(gk, []);
+    arrMap.get(gk).push(m);
+  }
+
+  let html = '<div class="result-title">&#128269; 找到 ' + matches.length + ' 处 Value 为 "' + escH(sv) + '"</div>';
+
+  // 非数组匹配：直接绝对路径（本身不含索引）
+  for (const m of nonArr) {
+    html += '<div class="jsonpath-output">';
+    html += '<div class="label">绝对路径（不在数组内）</div>';
+    html += '<div class="path-text">' + escH(m.fullPath) + '</div>';
+    html += '<div style="font-size:12px;margin-bottom:6px;">Key: <strong>' + escH(m.keyName) + '</strong> &nbsp; Value: ' + fv(m.value) + '</div>';
+    html += '<button class="copy-btn" data-path="' + escH(m.fullPath) + '" onclick="copyText(this.dataset.path,this)">复制 JSONPath</button>';
+    html += '</div>';
+  }
+
+  // 数组匹配分情况（关键判断依据是父数组长度，而非匹配数量）：
+  // 1. 父数组只有1个元素 → 数组内 key 不会重复，直接用 [] 索引
+  // 2. 父数组有多个元素，且可选条件属性 >= 2 → 同 key 在多个元素中出现，用条件过滤
+  // 3. 父数组有多个元素，但可选条件属性 <= 1 → 回退 [] 索引
+  const groups = [];
+  for (const [arrayPath, gm] of arrMap) {
+    const arrayName = lastKey(arrayPath);
+    // 取父数组实际长度（所有匹配来自同一数组，取第一个即可）
+    const arrLen = gm[0].parentArrayLen || 0;
+
+    if (arrLen <= 1) {
+      // —— 父数组只有1个元素：直接用 [] 索引 ——
+      for (const m of gm) {
+        const jp = m.fullPath;
+        html += '<div class="jsonpath-output">';
+        html += '<div class="label">在数组 <strong>' + escH(arrayName) + '</strong> 中（数组仅1个元素，使用索引定位）</div>';
+        html += '<div class="path-text">' + escH(jp) + '</div>';
+        if (m.keyName) {
+          html += '<div style="font-size:12px;margin-bottom:6px;">Key: <strong>' + escH(m.keyName) + '</strong> &nbsp; Value: ' + fv(m.value) + '</div>';
+        } else {
+          html += '<div style="font-size:12px;margin-bottom:6px;">Value: ' + fv(m.value) + '</div>';
+        }
+        html += '<button class="copy-btn" data-path="' + escH(jp) + '" onclick="copyText(this.dataset.path,this)">复制 JSONPath</button>';
+        html += '</div>';
+      }
+    } else {
+      // —— 父数组有多个元素：同 key 出现在多个元素中 ——
+      // siblings > 1（可选条件属性>=2）走条件过滤，否则用索引
+      const hasSib = gm.filter(m => m.siblings.length > 1);
+      const noSib  = gm.filter(m => m.siblings.length <= 1);
+
+      // 可选条件属性不足（0或仅1个）：用 [] 索引
+      if (noSib.length > 0) {
+        html += '<div class="jsonpath-output">';
+        html += '<div class="label">在数组 <strong>' + escH(arrayName) + '</strong> 中（可选条件属性不足，使用索引定位）</div>';
+        for (const m of noSib) {
+          const jp = m.fullPath;
+          html += '<div class="match-item" style="display:flex;align-items:center;justify-content:space-between;">';
+          html += '<div><span class="path-text" style="display:inline;padding:4px 8px;font-size:12px;">' + escH(jp) + '</span>';
+          html += ' &nbsp; Value: ' + fv(m.value) + '</div>';
+          html += '<button class="copy-btn" data-path="' + escH(jp) + '" onclick="copyText(this.dataset.path,this)">复制</button>';
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+
+      // 可选条件属性 >= 2：条件过滤
+      if (hasSib.length > 0) {
+        const sibMap = new Map();
+        for (const m of hasSib) {
+          for (const s of m.siblings) {
+            if (!sibMap.has(s.key)) sibMap.set(s.key, new Set());
+            sibMap.get(s.key).add(typeof s.value === 'string' ? s.value : JSON.stringify(s.value));
+          }
+        }
+        const sibKeys = [];
+        for (const [k, vs] of sibMap) sibKeys.push({ key: k, values: [...vs] });
+
+        const group = { arrayPath, arrayName, matches: hasSib, sibKeys };
+        groups.push(group);
+
+        html += '<div class="jsonpath-output">';
+        html += '<div class="label">在数组 <strong>' + escH(arrayName) + '</strong> 中找到 ' + hasSib.length + ' 处匹配（需条件定位）</div>';
+        html += '<div style="font-size:12px;color:#ad8b00;margin-bottom:8px;">&#128161; 同一数组内有多个相同 key，请在上方选择条件来区分定位：<code>$..' + escH(arrayName) + '[?(@.xxx==yyy)].' + escH(hasSib[0].keyName) + '</code></div>';
+
+        for (const m of hasSib) {
+          html += '<div class="match-item">';
+          html += '<div>Key: <strong style="color:#667eea">' + escH(m.keyName) + '</strong> = ' + fv(m.value) + '</div>';
+          html += '<div style="color:#aaa;font-size:11px;margin-top:3px;">可用条件: ' +
+            m.siblings.map(s => escH(s.key) + '=' + fv(s.value)).join('&nbsp;&nbsp;') + '</div>';
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+    }
+  }
+
+  ctx.groups = groups;
+
+  // 如果有数组内匹配，自动展示条件面板
+  if (groups.length > 0) {
+    // 默认选第一组
+    ctx.activeGroup = groups[0];
+    ctx.siblingKeys = groups[0].sibKeys;
+    const g = groups[0];
+    document.getElementById('conditionHint').innerHTML =
+      '&#128161; 在数组 <strong>' + escH(g.arrayName) + '</strong> 中定位 <strong>' + escH(g.matches[0].keyName) + '</strong>，请选择同级属性作为过滤条件：<br>' +
+      '生成格式：<code>$..' + escH(g.arrayName) + '[?(@.condKey==condValue)]' + sk(g.matches[0].keyName) + '</code>';
+    showConditions();
+  }
+
+  area.innerHTML = html;
+}
+
+// ======== 条件 UI ========
+function showConditions() {
+  document.getElementById('conditionRows').innerHTML = '';
+  document.getElementById('conditionArea').classList.add('active');
+  addConditionRow();
+}
+function hideConditions() {
+  document.getElementById('conditionArea').classList.remove('active');
+  document.getElementById('conditionRows').innerHTML = '';
+}
+
+function addConditionRow() {
+  const rows = document.getElementById('conditionRows');
+  if (!ctx.siblingKeys || ctx.siblingKeys.length === 0) return;
+  const idx = rows.children.length;
+  const div = document.createElement('div');
+  div.className = 'condition-row';
+  let opts = '<option value="">-- 选择属性 --</option>';
+  for (const s of ctx.siblingKeys) {
+    opts += '<option value="' + escH(s.key) + '">' + escH(s.key) + '</option>';
+  }
+  div.innerHTML =
+    '<span class="search-label" style="min-width:48px;text-align:right">' + (idx === 0 ? 'WHERE' : 'AND') + '</span>' +
+    '<select class="cond-key" onchange="onCondKeyChange(this)">' + opts + '</select>' +
+    '<span class="search-label">==</span>' +
+    '<div style="flex:1;display:flex;flex-direction:column;gap:3px;">' +
+      '<input type="text" class="cond-val" placeholder="输入值或从下方选择">' +
+      '<div class="value-tags"></div>' +
+    '</div>' +
+    '<button class="remove-cond" onclick="removeCondRow(this)">&times;</button>';
+  rows.appendChild(div);
+}
+
+function removeCondRow(btn) {
+  btn.closest('.condition-row').remove();
+  const rows = document.getElementById('conditionRows').children;
+  for (let i = 0; i < rows.length; i++)
+    rows[i].querySelector('.search-label').textContent = i === 0 ? 'WHERE' : 'AND';
+}
+
+function onCondKeyChange(sel) {
+  const ck = sel.value;
+  const row = sel.closest('.condition-row');
+  const tags = row.querySelector('.value-tags');
+  const inp = row.querySelector('.cond-val');
+  tags.innerHTML = ''; inp.value = '';
+  if (!ck || !ctx.activeGroup) return;
+  const vals = new Set();
+  for (const m of ctx.activeGroup.matches) {
+    for (const s of m.siblings) {
+      if (s.key === ck) vals.add(typeof s.value === 'string' ? s.value : JSON.stringify(s.value));
+    }
+  }
+  for (const v of vals) {
+    const tag = document.createElement('span');
+    tag.className = 'value-tag';
+    tag.textContent = v;
+    tag.onclick = function() {
+      tags.querySelectorAll('.value-tag').forEach(t => t.classList.remove('selected'));
+      tag.classList.add('selected');
+      inp.value = v;
+    };
+    tags.appendChild(tag);
+  }
+}
+
+// ======== 生成条件 JSONPath ========
+function applyFilter() {
+  const area = document.getElementById('resultArea');
+  const g = ctx.activeGroup;
+  if (!g) return;
+
+  const conds = [];
+  for (const row of document.querySelectorAll('#conditionRows .condition-row')) {
+    const k = (row.querySelector('.cond-key').value || '').trim();
+    const v = (row.querySelector('.cond-val').value || '').trim();
+    if (k && v) conds.push({ key: k, value: v });
+  }
+  if (conds.length === 0) {
+    area.innerHTML = '<div class="no-result">请至少选择一个条件属性并填写值</div>';
+    return;
+  }
+
+  // 过滤条件只用用户选的属性，不包含被搜索的 value
+  const filterParts = conds.map(c => '@' + sk(c.key) + '==' + ffv(c.value));
+  const filterExpr = filterParts.join(' && ');
+
+  // 找出匹配条件的元素，看它们的 keyName 是否相同
+  const filtered = g.matches.filter(m =>
+    conds.every(c => m.siblings.some(s => {
+      const sv = typeof s.value === 'string' ? s.value : JSON.stringify(s.value);
+      return s.key === c.key && sv === c.value;
+    }))
+  );
+
+  // 收集目标 key（可能相同也可能不同）
+  const targetKeys = [...new Set(filtered.map(m => m.keyName))];
+
+  let html = '<div class="result-title">&#127919; 条件 JSONPath 结果</div>';
+
+  for (const tk of targetKeys) {
+    const jp = '$..' + g.arrayName + '[?(' + filterExpr + ')]' + sk(tk);
+
+    html += '<div class="jsonpath-output">';
+    html += '<div class="label">定位 ' + escH(tk) + ' 的条件 JSONPath</div>';
+    html += '<div class="path-text">' + escH(jp) + '</div>';
+
+    const tkFiltered = filtered.filter(m => m.keyName === tk);
+    if (tkFiltered.length === 1) {
+      html += '<div style="font-size:12px;color:#52c41a;margin-bottom:8px;">&#9989; 唯一匹配! Value: ' + fv(tkFiltered[0].value) + '</div>';
+    } else if (tkFiltered.length > 1) {
+      html += '<div style="font-size:12px;color:#faad14;margin-bottom:8px;">&#9888; 匹配 ' + tkFiltered.length + ' 个元素，可继续添加条件</div>';
+    }
+
+    html += '<div style="margin-top:8px">';
+    html += '<button class="copy-btn" data-path="' + escH(jp) + '" onclick="copyText(this.dataset.path,this)">复制 JSONPath</button>';
+    html += '</div></div>';
+  }
+
+  // 也给出不带 key 的对象路径
+  const jpObj = '$..' + g.arrayName + '[?(' + filterExpr + ')]';
+  html += '<div class="jsonpath-output">';
+  html += '<div class="label">定位整个对象</div>';
+  html += '<div class="path-text">' + escH(jpObj) + '</div>';
+  html += '<button class="copy-btn" data-path="' + escH(jpObj) + '" onclick="copyText(this.dataset.path,this)">复制 JSONPath</button>';
+  html += '</div>';
+
+  if (filtered.length === 0) {
+    html = '<div class="result-title">&#127919; 条件 JSONPath 结果</div>';
+    html += '<div class="no-result">当前条件没有匹配结果，请检查条件值</div>';
+  }
+
+  area.innerHTML = html;
+}
+
+// ======== Tab 切换 ========
+function switchTab(tab) {
+  document.querySelectorAll('.search-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab' + (tab === 'value' ? 'Value' : 'Reverse')).classList.add('active');
+  
+  if (tab === 'value') {
+    document.getElementById('valueSearch').style.display = 'block';
+    document.getElementById('reverseSearch').classList.remove('active');
+    document.querySelector('.empty-state div:last-child').textContent = '输入 Value 查询其 JSONPath 路径';
+  } else {
+    document.getElementById('valueSearch').style.display = 'none';
+    document.getElementById('reverseSearch').classList.add('active');
+    document.querySelector('.empty-state div:last-child').textContent = '输入 JSONPath 查询对应的值';
+  }
+}
+
+// ======== 树形视图功能 ========
+let treeExpanded = new Set(['$']);
+let selectedPath = null;
+
+function toggleTree() {
+  const panel = document.getElementById('treePanel');
+  const main = document.querySelector('.main');
+  panel.classList.toggle('active');
+  main.classList.toggle('tree-open', panel.classList.contains('active'));
+  if (panel.classList.contains('active') && parsedJSON) {
+    renderTree();
+  }
+}
+
+function renderTree() {
+  if (!parsedJSON) {
+    document.getElementById('treeContent').innerHTML = '<div style="padding:20px;color:#999;text-align:center;">请先验证 JSON</div>';
+    return;
+  }
+  const html = buildTreeNode(parsedJSON, '$', 0);
+  document.getElementById('treeContent').innerHTML = html;
+}
+
+function buildTreeNode(obj, path, depth) {
+  const isExpanded = treeExpanded.has(path);
+  const isArray = Array.isArray(obj);
+  const isObject = obj !== null && typeof obj === 'object';
+  
+  if (!isObject) {
+    // 叶子节点
+    const valClass = typeof obj === 'string' ? 'string' : 
+                     typeof obj === 'number' ? 'number' :
+                     typeof obj === 'boolean' ? 'boolean' : 'null';
+    const displayVal = typeof obj === 'string' ? `"${escH(obj)}"` : String(obj);
+    return `<div class="tree-node" style="margin-left:${depth * 20}px">
+      <div class="tree-item ${selectedPath === path ? 'selected' : ''}" onclick="selectTreeNode('${escH(path)}')">
+        <span class="tree-toggle leaf">▶</span>
+        <span class="tree-value ${valClass}">${displayVal}</span>
+      </div>
+    </div>`;
+  }
+  
+  const keys = isArray ? obj.map((_, i) => i) : Object.keys(obj);
+  const bracketOpen = isArray ? '[' : '{';
+  const bracketClose = isArray ? ']' : '}';
+  
+  let html = `<div class="tree-node ${depth === 0 ? 'tree-node-root' : ''}" style="margin-left:${depth * 20}px">`;
+  
+  // 当前节点
+  html += `<div class="tree-item ${selectedPath === path ? 'selected' : ''}" onclick="selectTreeNode('${escH(path)}')">`;
+  html += `<span class="tree-toggle ${isExpanded ? 'expanded' : ''}" onclick="event.stopPropagation();toggleTreeNode('${escH(path)}')">▶</span>`;
+  if (depth > 0) {
+    const key = lastKey(path);
+    html += `<span class="tree-key">${isArray ? `[${key}]` : escH(key)}</span>`;
+  } else {
+    html += `<span class="tree-key">$</span>`;
+  }
+  html += `<span class="tree-bracket"> ${bracketOpen}${keys.length > 0 && !isExpanded ? '...' : ''}${bracketClose}</span>`;
+  html += `</div>`;
+  
+  // 子节点
+  if (isExpanded) {
+    for (const key of keys) {
+      const childPath = isArray ? `${path}[${key}]` : `${path}${sk(key)}`;
+      html += buildTreeNode(obj[key], childPath, depth + 1);
+    }
+  }
+  
+  html += '</div>';
+  return html;
+}
+
+function toggleTreeNode(path) {
+  if (treeExpanded.has(path)) {
+    treeExpanded.delete(path);
+  } else {
+    treeExpanded.add(path);
+  }
+  renderTree();
+}
+
+function selectTreeNode(path) {
+  selectedPath = path;
+  document.getElementById('treePathBar').style.display = 'block';
+  document.getElementById('treePathBar').textContent = path;
+  renderTree();
+  
+  // 复制到剪贴板
+  navigator.clipboard.writeText(path).then(() => {
+    showStatus('success', '路径已复制: ' + path);
+  });
+}
+
+// ======== 反向查询功能 ========
+function doReverseSearch() {
+  const path = document.getElementById('reversePath').value.trim();
+  const resultDiv = document.getElementById('reverseResult');
+  
+  if (!path) {
+    resultDiv.innerHTML = '<div class="reverse-result error"><div class="reverse-result-title">请输入 JSONPath</div></div>';
+    resultDiv.style.display = 'block';
+    return;
+  }
+  
+  if (!parsedJSON) {
+    const raw = document.getElementById('jsonInput').value.trim();
+    if (!raw) {
+      resultDiv.innerHTML = '<div class="reverse-result error"><div class="reverse-result-title">请先在左侧输入 JSON 文本</div></div>';
+      resultDiv.style.display = 'block';
+      return;
+    }
+    try {
+      parsedJSON = JSON.parse(raw);
+    } catch (e) {
+      resultDiv.innerHTML = '<div class="reverse-result error"><div class="reverse-result-title">JSON 格式错误</div></div>';
+      resultDiv.style.display = 'block';
+      return;
+    }
+  }
+  
+  try {
+    const value = evalJSONPath(parsedJSON, path);
+
+    if (value === undefined) {
+      resultDiv.innerHTML = `<div class="reverse-result error"><div class="reverse-result-title">未找到匹配结果，请检查路径是否正确</div></div>`;
+      resultDiv.style.display = 'block';
+      return;
+    }
+
+    // 多结果（数组）和单结果分别展示
+    const isMulti = Array.isArray(value) && value._isMultiResult;
+    let valueHtml;
+    if (Array.isArray(value) && value.length > 1) {
+      valueHtml = `<div style="color:#666;font-size:12px;margin-bottom:6px;">共 ${value.length} 条匹配结果</div>`
+        + value.map((v, i) => `<div style="margin-bottom:6px;"><span style="color:#999;font-size:11px;">[${i}]</span> ${formatValue(v)}</div>`).join('');
+    } else {
+      valueHtml = formatValue(value);
+    }
+    
+    resultDiv.innerHTML = `
+      <div class="reverse-result">
+        <div class="reverse-result-title">查询结果</div>
+        <div style="font-family:monospace;font-size:13px;">${valueHtml}</div>
+      </div>
+    `;
+    resultDiv.style.display = 'block';
+    
+    // 高亮左侧 JSON 中的值
+    highlightInJSON(value);
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="reverse-result error"><div class="reverse-result-title">路径错误: ${escH(e.message)}</div></div>`;
+    resultDiv.style.display = 'block';
+  }
+}
+
+function evalJSONPath(obj, path) {
+  if (!path.startsWith('$')) {
+    throw new Error('路径必须以 $ 开头');
+  }
+
+  // ======== 转义处理工具函数 ========
+  // 解析条件表达式: @.key=="value" 或 @.key==123 或 @.key==true
+  function matchCondition(item, condStr) {
+    // 支持多个条件：@.a=="x" && @.b=="y"
+    const andParts = condStr.split(/\s*&&\s*/);
+    return andParts.every(cond => {
+      // 匹配 @.key == value 格式
+      const m = cond.trim().match(/^@\.([\w]+)\s*==\s*(.+)$/) ||
+                cond.trim().match(/^@\['([^']+)'\]\s*==\s*(.+)$/);
+      if (!m) return false;
+      const key = m[1];
+      let expected = m[2].trim();
+      const actual = item == null ? undefined : item[key];
+      // 解析期望值类型
+      if (expected === 'true')  return actual === true;
+      if (expected === 'false') return actual === false;
+      if (expected === 'null')  return actual === null;
+      if (/^".*"$/.test(expected)) return String(actual) === expected.slice(1, -1);
+      if (!isNaN(Number(expected))) return actual == Number(expected);
+      return String(actual) === expected;
+    });
+  }
+
+  // 递归搜层：在 node 中深层找到所有名为 key 的节点
+  function deepSearch(node, key) {
+    const results = [];
+    if (node === null || typeof node !== 'object') return results;
+    if (Array.isArray(node)) {
+      for (const item of node) results.push(...deepSearch(item, key));
+    } else {
+      for (const k of Object.keys(node)) {
+        if (k === key) results.push(node[k]);
+        results.push(...deepSearch(node[k], key));
+      }
+    }
+    return results;
+  }
+
+  // 递归搜层所有数组（配合 $.. 语法）
+  function deepSearchArrays(node, arrayKey) {
+    const results = [];
+    if (node === null || typeof node !== 'object') return results;
+    if (Array.isArray(node)) {
+      for (const item of node) results.push(...deepSearchArrays(item, arrayKey));
+    } else {
+      for (const k of Object.keys(node)) {
+        if (k === arrayKey && Array.isArray(node[k])) results.push(node[k]);
+        results.push(...deepSearchArrays(node[k], arrayKey));
+      }
+    }
+    return results;
+  }
+
+  // ======== 路径解析 ========
+  // 将路径拆分为 token 列表
+  function tokenize(path) {
+    const tokens = [];
+    let i = 0;
+    const s = path.slice(1); // 去掉开头的 $
+    while (i < s.length) {
+      // .. 递归
+      if (s[i] === '.' && s[i+1] === '.') {
+        i += 2;
+        // 读取键名
+        if (s[i] === '[') {
+          // ..[
+          let j = i;
+          let depth = 0;
+          while (j < s.length) {
+            if (s[j] === '[') depth++;
+            else if (s[j] === ']') { depth--; if (depth === 0) { j++; break; } }
+            j++;
+          }
+          tokens.push({ type: 'recursive', expr: s.slice(i, j) });
+          i = j;
+        } else {
+          let j = i;
+          while (j < s.length && s[j] !== '.' && s[j] !== '[') j++;
+          tokens.push({ type: 'recursive', key: s.slice(i, j) });
+          i = j;
+        }
+      }
+      // . 普通属性
+      else if (s[i] === '.') {
+        i++;
+        let j = i;
+        while (j < s.length && s[j] !== '.' && s[j] !== '[') j++;
+        tokens.push({ type: 'key', key: s.slice(i, j) });
+        i = j;
+      }
+      // [ 下标/条件
+      else if (s[i] === '[') {
+        let j = i + 1;
+        let depth = 0;
+        while (j < s.length) {
+          if (s[j] === '[') depth++;
+          else if (s[j] === ']') {
+            if (depth === 0) { j++; break; }
+            depth--;
+          }
+          j++;
+        }
+        const inner = s.slice(i+1, j-1);
+        if (/^\d+$/.test(inner)) {
+          tokens.push({ type: 'index', index: parseInt(inner) });
+        } else if (inner.startsWith("'") && inner.endsWith("'")) {
+          tokens.push({ type: 'key', key: inner.slice(1, -1) });
+        } else if (inner.startsWith('?(') && inner.endsWith(')')) {
+          tokens.push({ type: 'filter', cond: inner.slice(2, -1) });
+        }
+        i = j;
+      } else {
+        i++;
+      }
+    }
+    return tokens;
+  }
+
+  // ======== 执行 token 列表 ========
+  function execute(nodes, tokens) {
+    let current = Array.isArray(nodes) ? nodes : [nodes];
+
+    for (let ti = 0; ti < tokens.length; ti++) {
+      const token = tokens[ti];
+      const next = [];
+
+      if (token.type === 'key') {
+        for (const node of current) {
+          if (node !== null && typeof node === 'object' && !Array.isArray(node)) {
+            if (token.key in node) next.push(node[token.key]);
+          }
+        }
+      }
+
+      else if (token.type === 'index') {
+        for (const node of current) {
+          if (Array.isArray(node) && token.index < node.length) next.push(node[token.index]);
+        }
+      }
+
+      else if (token.type === 'filter') {
+        for (const node of current) {
+          if (Array.isArray(node)) {
+            for (const item of node) {
+              if (matchCondition(item, token.cond)) next.push(item);
+            }
+          }
+        }
+      }
+
+      else if (token.type === 'recursive') {
+        // 检查后续是否有 filter 和 key 需要链式处理
+        // 例如: $..p[?(@.pagerows==20)].phide
+        // token0: recursive(p), token1: filter, token2: key(phide)
+        const chainFilters = [];
+        let nextIdx = ti + 1;
+        while (nextIdx < tokens.length && tokens[nextIdx].type === 'filter') {
+          chainFilters.push(tokens[nextIdx].cond);
+          nextIdx++;
+        }
+        const hasKeyAfter = nextIdx < tokens.length && tokens[nextIdx].type === 'key';
+        const finalKey = hasKeyAfter ? tokens[nextIdx].key : null;
+
+        // 递归搜索所有匹配的节点
+        function deepCollect(node, key, filters, lastKey) {
+          const res = [];
+          if (node === null || typeof node !== 'object') return res;
+
+          if (Array.isArray(node)) {
+            for (const item of node) res.push(...deepCollect(item, key, filters, lastKey));
+          } else {
+            for (const k of Object.keys(node)) {
+              const v = node[k];
+              if (k === key) {
+                // 找到目标键，检查是否是数组需要过滤
+                if (Array.isArray(v)) {
+                  let filtered = v;
+                  // 应用所有条件过滤
+                  for (const cond of filters) {
+                    filtered = filtered.filter(item => matchCondition(item, cond));
+                  }
+                  // 如果有最后的 .key，取该属性
+                  if (lastKey) {
+                    for (const item of filtered) {
+                      if (item !== null && typeof item === 'object' && lastKey in item) {
+                        res.push(item[lastKey]);
+                      }
+                    }
+                  } else {
+                    res.push(...filtered);
+                  }
+                } else if (filters.length === 0) {
+                  // 非数组且无过滤条件，直接返回
+                  if (lastKey) {
+                    if (v !== null && typeof v === 'object' && lastKey in v) {
+                      res.push(v[lastKey]);
+                    }
+                  } else {
+                    res.push(v);
+                  }
+                }
+              }
+              // 递归搜索子节点
+              res.push(...deepCollect(v, key, filters, lastKey));
+            }
+          }
+          return res;
+        }
+
+        const searchKey = token.key || (token.expr ? token.expr.slice(1, -1) : null);
+        for (const node of current) {
+          if (token.key) {
+            next.push(...deepCollect(node, token.key, chainFilters, finalKey));
+          } else if (token.expr) {
+            // $..[?(...)] 形式 - 递归搜索所有数组元素
+            const inner = token.expr.slice(1, -1);
+            if (inner.startsWith('?(') && inner.endsWith(')')) {
+              const cond = inner.slice(2, -1);
+              function collectAllArrays(n) {
+                const arr = [];
+                if (Array.isArray(n)) {
+                  for (const item of n) {
+                    if (matchCondition(item, cond)) arr.push(item);
+                    arr.push(...collectAllArrays(item));
+                  }
+                } else if (n !== null && typeof n === 'object') {
+                  for (const v of Object.values(n)) arr.push(...collectAllArrays(v));
+                }
+                return arr;
+              }
+              next.push(...collectAllArrays(node));
+            }
+          }
+        }
+
+        // 跳过已处理的 filter 和 key tokens
+        if (chainFilters.length > 0 || finalKey) {
+          ti = nextIdx - (finalKey ? 0 : 0);
+          if (finalKey) ti = nextIdx;
+          else ti = nextIdx - 1;
+        }
+      }
+
+      current = next;
+    }
+
+    return current;
+  }
+
+  const tokens = tokenize(path);
+  const results = execute([obj], tokens);
+
+  if (results.length === 0) return undefined;
+  if (results.length === 1) return results[0];
+  return results;
+}
+
+function formatValue(value) {
+  if (value === undefined) return '<span style="color:#999">undefined</span>';
+  if (value === null) return '<span style="color:#999">null</span>';
+  if (typeof value === 'string') return `<span style="color:#c41a16">"${escH(value)}"</span>`;
+  if (typeof value === 'number') return `<span style="color:#1c00cf">${value}</span>`;
+  if (typeof value === 'boolean') return `<span style="color:#aa0d91">${value}</span>`;
+  return '<pre style="margin:0;background:#f5f5f5;padding:8px;border-radius:4px;overflow:auto;">' + escH(JSON.stringify(value, null, 2)) + '</pre>';
+}
+
+function highlightInJSON(value) {
+  // 简单高亮：在 textarea 中查找并高亮值
+  // 实际实现需要更复杂的文本处理，这里仅作演示
+  const textarea = document.getElementById('jsonInput');
+  const text = textarea.value;
+  const searchVal = typeof value === 'string' ? `"${value}"` : String(value);
+  
+  // 找到位置并滚动到那里
+  const index = text.indexOf(searchVal);
+  if (index !== -1) {
+    textarea.focus();
+    textarea.setSelectionRange(index, index + searchVal.length);
+  }
+}
+
+// ======== 监听用户手动输入，重置 originalJSON ========
+const textarea = document.getElementById('jsonInput');
+textarea.addEventListener('input', () => { 
+  originalJSON = null; 
+  // 如果树形视图打开，实时更新
+  const treePanel = document.getElementById('treePanel');
+  if (treePanel.classList.contains('active')) {
+    clearTimeout(window.treeRenderTimer);
+    window.treeRenderTimer = setTimeout(() => {
+      if (validateJSON(false)) {
+        renderTree();
+      }
+    }, 500);
+  }
+});
+
+// ======== 拖放 ========
+textarea.addEventListener('dragover', (e) => { e.preventDefault(); textarea.style.background = '#f0f0ff'; });
+textarea.addEventListener('dragleave', () => { textarea.style.background = ''; });
+textarea.addEventListener('drop', (e) => {
+  e.preventDefault(); textarea.style.background = '';
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = (ev) => { 
+      textarea.value = ev.target.result; 
+      validateJSON(true);
+      // 自动打开树形视图
+      const treePanel = document.getElementById('treePanel');
+      if (!treePanel.classList.contains('active')) {
+        toggleTree();
+      }
+    };
+    reader.readAsText(file);
+  }
+});
+</script>
+</body>
+</html>
