@@ -516,15 +516,18 @@ function lastKey(p) {
 }
 
 // ======== 按 Value 搜索 ========
-function findByValue(obj, sv, path, parentArrayPath, parentArrayLen) {
+function findByValue(obj, sv, path, parentArrayPath, parentArrayLen, nestedPath) {
   const r = [];
   if (obj === null || typeof obj !== 'object') return r;
+  nestedPath = nestedPath || ''; // 记录当前对象的嵌套路径，用于构建完整的 keyName
+
   if (Array.isArray(obj)) {
     for (let i = 0; i < obj.length; i++) {
       const p = path + '[' + i + ']';
       const item = obj[i];
       if (item !== null && typeof item === 'object') {
-        r.push(...findByValue(item, sv, p, path, obj.length));
+        // 数组内的对象，递归搜索，传递当前数组路径作为 parentArrayPath
+        r.push(...findByValue(item, sv, p, path, obj.length, ''));
       } else if (item !== null && String(item) === sv) {
         // 数组内的原始值直接匹配（无对象、无 sibling key）
         r.push({
@@ -539,23 +542,35 @@ function findByValue(obj, sv, path, parentArrayPath, parentArrayLen) {
     for (const k of Object.keys(obj)) {
       const p = path + sk(k);
       const val = obj[k];
+      // 当前属性的完整路径（包含嵌套）
+      const fullKeyName = nestedPath ? nestedPath + '.' + k : k;
+
       if (val !== null && typeof val !== 'object' && String(val) === sv) {
         // 收集同级所有基本类型属性（排除自身key）
+        // 同级属性也需要带上嵌套路径前缀
         const sibs = [];
         for (const s of Object.keys(obj)) {
           if (s !== k && obj[s] !== null && typeof obj[s] !== 'object') {
-            sibs.push({ key: s, value: obj[s] });
+            const sibKey = nestedPath ? nestedPath + '.' + s : s;
+            sibs.push({ key: sibKey, value: obj[s] });
           }
         }
         r.push({
-          keyName: k, value: val, fullPath: p,
+          keyName: fullKeyName, value: val, fullPath: p,
           inArray: parentArrayPath !== null,
           parentArrayPath: parentArrayPath,
           parentArrayLen: parentArrayLen || 0,
           siblings: sibs
         });
       } else if (typeof val === 'object' && val !== null) {
-        r.push(...findByValue(val, sv, p, Array.isArray(val) ? p : parentArrayPath, Array.isArray(val) ? val.length : parentArrayLen));
+        // 递归搜索子对象，传递嵌套路径
+        // 如果子对象是数组，则它成为新的 parentArrayPath
+        const newNestedPath = nestedPath ? nestedPath + '.' + k : k;
+        if (Array.isArray(val)) {
+          r.push(...findByValue(val, sv, p, p, val.length, ''));
+        } else {
+          r.push(...findByValue(val, sv, p, parentArrayPath, parentArrayLen, newNestedPath));
+        }
       }
     }
   }
