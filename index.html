@@ -969,7 +969,22 @@ function doReverseSearch() {
   
   try {
     const value = evalJSONPath(parsedJSON, path);
-    const valueHtml = formatValue(value);
+
+    if (value === undefined) {
+      resultDiv.innerHTML = `<div class="reverse-result error"><div class="reverse-result-title">未找到匹配结果，请检查路径是否正确</div></div>`;
+      resultDiv.style.display = 'block';
+      return;
+    }
+
+    // 多结果（数组）和单结果分别展示
+    const isMulti = Array.isArray(value) && value._isMultiResult;
+    let valueHtml;
+    if (Array.isArray(value) && value.length > 1) {
+      valueHtml = `<div style="color:#666;font-size:12px;margin-bottom:6px;">共 ${value.length} 条匹配结果</div>`
+        + value.map((v, i) => `<div style="margin-bottom:6px;"><span style="color:#999;font-size:11px;">[${i}]</span> ${formatValue(v)}</div>`).join('');
+    } else {
+      valueHtml = formatValue(value);
+    }
     
     resultDiv.innerHTML = `
       <div class="reverse-result">
@@ -988,37 +1003,200 @@ function doReverseSearch() {
 }
 
 function evalJSONPath(obj, path) {
-  // 支持 $.key1.key2[0].key3 格式
   if (!path.startsWith('$')) {
     throw new Error('路径必须以 $ 开头');
   }
-  
-  let current = obj;
-  const parts = path.slice(1).match(/\.(\w+)|\[(\d+)\]|\['([^']+)'\]/g) || [];
-  
-  for (const part of parts) {
-    if (part.startsWith('.')) {
-      const key = part.slice(1);
-      if (current === null || typeof current !== 'object' || Array.isArray(current)) {
-        throw new Error(`无法访问属性 ${key}`);
-      }
-      current = current[key];
-    } else if (part.startsWith('[') && !part.startsWith("['")) {
-      const index = parseInt(part.slice(1, -1));
-      if (!Array.isArray(current)) {
-        throw new Error(`无法访问索引 ${index}`);
-      }
-      current = current[index];
-    } else if (part.startsWith("['")) {
-      const key = part.slice(2, -2);
-      if (current === null || typeof current !== 'object') {
-        throw new Error(`无法访问属性 ${key}`);
-      }
-      current = current[key];
-    }
+
+  // ======== 转义处理工具函数 ========
+  // 解析条件表达式: @.key=="value" 或 @.key==123 或 @.key==true
+  function matchCondition(item, condStr) {
+    // 支持多个条件：@.a=="x" && @.b=="y"
+    const andParts = condStr.split(/\s*&&\s*/);
+    return andParts.every(cond => {
+      // 匹配 @.key == value 格式
+      const m = cond.trim().match(/^@\.([\w]+)\s*==\s*(.+)$/) ||
+                cond.trim().match(/^@\['([^']+)'\]\s*==\s*(.+)$/);
+      if (!m) return false;
+      const key = m[1];
+      let expected = m[2].trim();
+      const actual = item == null ? undefined : item[key];
+      // 解析期望值类型
+      if (expected === 'true')  return actual === true;
+      if (expected === 'false') return actual === false;
+      if (expected === 'null')  return actual === null;
+      if (/^".*"$/.test(expected)) return String(actual) === expected.slice(1, -1);
+      if (!isNaN(Number(expected))) return actual == Number(expected);
+      return String(actual) === expected;
+    });
   }
-  
-  return current;
+
+  // 递归搜层：在 node 中深层找到所有名为 key 的节点
+  function deepSearch(node, key) {
+    const results = [];
+    if (node === null || typeof node !== 'object') return results;
+    if (Array.isArray(node)) {
+      for (const item of node) results.push(...deepSearch(item, key));
+    } else {
+      for (const k of Object.keys(node)) {
+        if (k === key) results.push(node[k]);
+        results.push(...deepSearch(node[k], key));
+      }
+    }
+    return results;
+  }
+
+  // 递归搜层所有数组（配合 $.. 语法）
+  function deepSearchArrays(node, arrayKey) {
+    const results = [];
+    if (node === null || typeof node !== 'object') return results;
+    if (Array.isArray(node)) {
+      for (const item of node) results.push(...deepSearchArrays(item, arrayKey));
+    } else {
+      for (const k of Object.keys(node)) {
+        if (k === arrayKey && Array.isArray(node[k])) results.push(node[k]);
+        results.push(...deepSearchArrays(node[k], arrayKey));
+      }
+    }
+    return results;
+  }
+
+  // ======== 路径解析 ========
+  // 将路径拆分为 token 列表
+  function tokenize(path) {
+    const tokens = [];
+    let i = 0;
+    const s = path.slice(1); // 去掉开头的 $
+    while (i < s.length) {
+      // .. 递归
+      if (s[i] === '.' && s[i+1] === '.') {
+        i += 2;
+        // 读取键名
+        if (s[i] === '[') {
+          // ..[
+          let j = i;
+          let depth = 0;
+          while (j < s.length) {
+            if (s[j] === '[') depth++;
+            else if (s[j] === ']') { depth--; if (depth === 0) { j++; break; } }
+            j++;
+          }
+          tokens.push({ type: 'recursive', expr: s.slice(i, j) });
+          i = j;
+        } else {
+          let j = i;
+          while (j < s.length && s[j] !== '.' && s[j] !== '[') j++;
+          tokens.push({ type: 'recursive', key: s.slice(i, j) });
+          i = j;
+        }
+      }
+      // . 普通属性
+      else if (s[i] === '.') {
+        i++;
+        let j = i;
+        while (j < s.length && s[j] !== '.' && s[j] !== '[') j++;
+        tokens.push({ type: 'key', key: s.slice(i, j) });
+        i = j;
+      }
+      // [ 下标/条件
+      else if (s[i] === '[') {
+        let j = i + 1;
+        let depth = 0;
+        while (j < s.length) {
+          if (s[j] === '[') depth++;
+          else if (s[j] === ']') {
+            if (depth === 0) { j++; break; }
+            depth--;
+          }
+          j++;
+        }
+        const inner = s.slice(i+1, j-1);
+        if (/^\d+$/.test(inner)) {
+          tokens.push({ type: 'index', index: parseInt(inner) });
+        } else if (inner.startsWith("'") && inner.endsWith("'")) {
+          tokens.push({ type: 'key', key: inner.slice(1, -1) });
+        } else if (inner.startsWith('?(') && inner.endsWith(')')) {
+          tokens.push({ type: 'filter', cond: inner.slice(2, -1) });
+        }
+        i = j;
+      } else {
+        i++;
+      }
+    }
+    return tokens;
+  }
+
+  // ======== 执行 token 列表 ========
+  function execute(nodes, tokens) {
+    let current = Array.isArray(nodes) ? nodes : [nodes];
+
+    for (const token of tokens) {
+      const next = [];
+
+      if (token.type === 'key') {
+        for (const node of current) {
+          if (node !== null && typeof node === 'object' && !Array.isArray(node)) {
+            if (token.key in node) next.push(node[token.key]);
+          }
+        }
+      }
+
+      else if (token.type === 'index') {
+        for (const node of current) {
+          if (Array.isArray(node) && token.index < node.length) next.push(node[token.index]);
+        }
+      }
+
+      else if (token.type === 'filter') {
+        for (const node of current) {
+          if (Array.isArray(node)) {
+            for (const item of node) {
+              if (matchCondition(item, token.cond)) next.push(item);
+            }
+          }
+        }
+      }
+
+      else if (token.type === 'recursive') {
+        if (token.key) {
+          // $..key 形式
+          for (const node of current) {
+            next.push(...deepSearch(node, token.key));
+          }
+        } else if (token.expr) {
+          // $..[?(...)]
+          const inner = token.expr.slice(1, -1); // 去掉 [ ]
+          if (inner.startsWith('?(') && inner.endsWith(')')) {
+            const cond = inner.slice(2, -1);
+            // 找到所有数组然后过滤
+            function collectAll(node) {
+              const arr = [];
+              if (Array.isArray(node)) {
+                for (const item of node) {
+                  if (matchCondition(item, cond)) arr.push(item);
+                  arr.push(...collectAll(item));
+                }
+              } else if (node !== null && typeof node === 'object') {
+                for (const v of Object.values(node)) arr.push(...collectAll(v));
+              }
+              return arr;
+            }
+            for (const node of current) next.push(...collectAll(node));
+          }
+        }
+      }
+
+      current = next;
+    }
+
+    return current;
+  }
+
+  const tokens = tokenize(path);
+  const results = execute([obj], tokens);
+
+  if (results.length === 0) return undefined;
+  if (results.length === 1) return results[0];
+  return results;
 }
 
 function formatValue(value) {
