@@ -516,20 +516,19 @@ function lastKey(p) {
 }
 
 // ======== 按 Value 搜索 ========
-function findByValue(obj, sv, path, parentArrayPath, parentArrayLen, nestedPath) {
+function findByValue(obj, sv, path, parentArrayPath, parentArrayLen, nestedPrefix) {
   const r = [];
   if (obj === null || typeof obj !== 'object') return r;
-  nestedPath = nestedPath || ''; // 记录当前对象的嵌套路径，用于构建完整的 keyName
+  nestedPrefix = nestedPrefix || ''; // 从 parentArrayPath 到当前对象的路径前缀
 
   if (Array.isArray(obj)) {
     for (let i = 0; i < obj.length; i++) {
       const p = path + '[' + i + ']';
       const item = obj[i];
       if (item !== null && typeof item === 'object') {
-        // 数组内的对象，递归搜索，传递当前数组路径作为 parentArrayPath
+        // 数组内的对象，当前数组成为 parentArrayPath，重置 nestedPrefix
         r.push(...findByValue(item, sv, p, path, obj.length, ''));
       } else if (item !== null && String(item) === sv) {
-        // 数组内的原始值直接匹配（无对象、无 sibling key）
         r.push({
           keyName: null, value: item, fullPath: p,
           inArray: true, parentArrayPath: path,
@@ -542,16 +541,15 @@ function findByValue(obj, sv, path, parentArrayPath, parentArrayLen, nestedPath)
     for (const k of Object.keys(obj)) {
       const p = path + sk(k);
       const val = obj[k];
-      // 当前属性的完整路径（包含嵌套）
-      const fullKeyName = nestedPath ? nestedPath + '.' + k : k;
+      // 当前属性的完整路径（从 parentArrayPath 开始）
+      const fullKeyName = nestedPrefix ? nestedPrefix + '.' + k : k;
 
       if (val !== null && typeof val !== 'object' && String(val) === sv) {
-        // 收集同级所有基本类型属性（排除自身key）
-        // 同级属性也需要带上嵌套路径前缀
+        // 收集同级属性（排除自身），带上 nestedPrefix
         const sibs = [];
         for (const s of Object.keys(obj)) {
           if (s !== k && obj[s] !== null && typeof obj[s] !== 'object') {
-            const sibKey = nestedPath ? nestedPath + '.' + s : s;
+            const sibKey = nestedPrefix ? nestedPrefix + '.' + s : s;
             sibs.push({ key: sibKey, value: obj[s] });
           }
         }
@@ -563,13 +561,15 @@ function findByValue(obj, sv, path, parentArrayPath, parentArrayLen, nestedPath)
           siblings: sibs
         });
       } else if (typeof val === 'object' && val !== null) {
-        // 递归搜索子对象，传递嵌套路径
+        // 递归搜索子对象
+        // 如果已经在数组内（parentArrayPath 不为 null），则累加 nestedPrefix
         // 如果子对象是数组，则它成为新的 parentArrayPath
-        const newNestedPath = nestedPath ? nestedPath + '.' + k : k;
+        const newPrefix = nestedPrefix ? nestedPrefix + '.' + k : k;
         if (Array.isArray(val)) {
           r.push(...findByValue(val, sv, p, p, val.length, ''));
         } else {
-          r.push(...findByValue(val, sv, p, parentArrayPath, parentArrayLen, newNestedPath));
+          // 子对象不是数组，继续传递 parentArrayPath 和新的 nestedPrefix
+          r.push(...findByValue(val, sv, p, parentArrayPath, parentArrayLen, newPrefix));
         }
       }
     }
