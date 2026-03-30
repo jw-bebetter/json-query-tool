@@ -501,7 +501,17 @@ function copyText(text, btn) {
     setTimeout(() => { btn.textContent = o; btn.style.background = ''; }, 1200);
   });
 }
-function sk(key) { return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? '.' + key : "['" + key.replace(/'/g, "\\'") + "']"; }
+function sk(key) {
+  // 支持嵌套路径，如 data.pagerows 变为 .data.pagerows
+  if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key)) {
+    return '.' + key;
+  }
+  // 如果 key 包含点，则拆分成链式访问
+  if (key.includes('.')) {
+    return '.' + key; // 直接返回 .data.pagerows，让 tokenize 去处理
+  }
+  return "['" + key.replace(/'/g, "\\'") + "']";
+}
 function ffv(v) {
   if (v === 'true' || v === 'false') return v;
   if (!isNaN(Number(v)) && v !== '') return v;
@@ -516,17 +526,19 @@ function lastKey(p) {
 }
 
 // ======== 按 Value 搜索 ========
-function findByValue(obj, sv, path, parentArrayPath, parentArrayLen) {
+function findByValue(obj, sv, path, parentArrayPath, parentArrayLen, nestedPrefix) {
   const r = [];
   if (obj === null || typeof obj !== 'object') return r;
+  nestedPrefix = nestedPrefix || ''; // 从 parentArrayPath 到当前对象的路径前缀
+
   if (Array.isArray(obj)) {
     for (let i = 0; i < obj.length; i++) {
       const p = path + '[' + i + ']';
       const item = obj[i];
       if (item !== null && typeof item === 'object') {
-        r.push(...findByValue(item, sv, p, path, obj.length));
+        // 数组内的对象，当前数组成为 parentArrayPath，重置 nestedPrefix
+        r.push(...findByValue(item, sv, p, path, obj.length, ''));
       } else if (item !== null && String(item) === sv) {
-        // 数组内的原始值直接匹配（无对象、无 sibling key）
         r.push({
           keyName: null, value: item, fullPath: p,
           inArray: true, parentArrayPath: path,
@@ -539,23 +551,36 @@ function findByValue(obj, sv, path, parentArrayPath, parentArrayLen) {
     for (const k of Object.keys(obj)) {
       const p = path + sk(k);
       const val = obj[k];
+      // 当前属性的完整路径（从 parentArrayPath 开始）
+      const fullKeyName = nestedPrefix ? nestedPrefix + '.' + k : k;
+
       if (val !== null && typeof val !== 'object' && String(val) === sv) {
-        // 收集同级所有基本类型属性（排除自身key）
+        // 收集同级属性（排除自身），带上 nestedPrefix
         const sibs = [];
         for (const s of Object.keys(obj)) {
           if (s !== k && obj[s] !== null && typeof obj[s] !== 'object') {
-            sibs.push({ key: s, value: obj[s] });
+            const sibKey = nestedPrefix ? nestedPrefix + '.' + s : s;
+            sibs.push({ key: sibKey, value: obj[s] });
           }
         }
         r.push({
-          keyName: k, value: val, fullPath: p,
+          keyName: fullKeyName, value: val, fullPath: p,
           inArray: parentArrayPath !== null,
           parentArrayPath: parentArrayPath,
           parentArrayLen: parentArrayLen || 0,
           siblings: sibs
         });
       } else if (typeof val === 'object' && val !== null) {
-        r.push(...findByValue(val, sv, p, Array.isArray(val) ? p : parentArrayPath, Array.isArray(val) ? val.length : parentArrayLen));
+        // 递归搜索子对象
+        // 如果已经在数组内（parentArrayPath 不为 null），则累加 nestedPrefix
+        // 如果子对象是数组，则它成为新的 parentArrayPath
+        const newPrefix = nestedPrefix ? nestedPrefix + '.' + k : k;
+        if (Array.isArray(val)) {
+          r.push(...findByValue(val, sv, p, p, val.length, ''));
+        } else {
+          // 子对象不是数组，继续传递 parentArrayPath 和新的 nestedPrefix
+          r.push(...findByValue(val, sv, p, parentArrayPath, parentArrayLen, newPrefix));
+        }
       }
     }
   }
@@ -1009,17 +1034,29 @@ function evalJSONPath(obj, path) {
 
   // ======== 转义处理工具函数 ========
   // 解析条件表达式: @.key=="value" 或 @.key==123 或 @.key==true
+  // 支持嵌套路径: @.data.pagerows==20
   function matchCondition(item, condStr) {
     // 支持多个条件：@.a=="x" && @.b=="y"
     const andParts = condStr.split(/\s*&&\s*/);
     return andParts.every(cond => {
-      // 匹配 @.key == value 格式
-      const m = cond.trim().match(/^@\.([\w]+)\s*==\s*(.+)$/) ||
+      // 匹配 @.key == value 格式（支持嵌套路径）
+      const m = cond.trim().match(/^@\.([\w.]+)\s*==\s*(.+)$/) ||
                 cond.trim().match(/^@\['([^']+)'\]\s*==\s*(.+)$/);
       if (!m) return false;
-      const key = m[1];
+      const keyPath = m[1];
       let expected = m[2].trim();
-      const actual = item == null ? undefined : item[key];
+
+      // 支持嵌套路径，如 data.pagerows
+      const keys = keyPath.split('.');
+      let actual = item;
+      for (const k of keys) {
+        if (actual == null || typeof actual !== 'object') {
+          actual = undefined;
+          break;
+        }
+        actual = actual[k];
+      }
+
       // 解析期望值类型
       if (expected === 'true')  return actual === true;
       if (expected === 'false') return actual === false;
@@ -1129,7 +1166,8 @@ function evalJSONPath(obj, path) {
   function execute(nodes, tokens) {
     let current = Array.isArray(nodes) ? nodes : [nodes];
 
-    for (const token of tokens) {
+    for (let ti = 0; ti < tokens.length; ti++) {
+      const token = tokens[ti];
       const next = [];
 
       if (token.type === 'key') {
@@ -1157,31 +1195,95 @@ function evalJSONPath(obj, path) {
       }
 
       else if (token.type === 'recursive') {
-        if (token.key) {
-          // $..key 形式
-          for (const node of current) {
-            next.push(...deepSearch(node, token.key));
-          }
-        } else if (token.expr) {
-          // $..[?(...)]
-          const inner = token.expr.slice(1, -1); // 去掉 [ ]
-          if (inner.startsWith('?(') && inner.endsWith(')')) {
-            const cond = inner.slice(2, -1);
-            // 找到所有数组然后过滤
-            function collectAll(node) {
-              const arr = [];
-              if (Array.isArray(node)) {
-                for (const item of node) {
-                  if (matchCondition(item, cond)) arr.push(item);
-                  arr.push(...collectAll(item));
+        // 检查后续是否有 filter 和 key 需要链式处理
+        // 例如: $..p[?(@.pagerows==20)].phide
+        // token0: recursive(p), token1: filter, token2: key(phide)
+        const chainFilters = [];
+        let nextIdx = ti + 1;
+        while (nextIdx < tokens.length && tokens[nextIdx].type === 'filter') {
+          chainFilters.push(tokens[nextIdx].cond);
+          nextIdx++;
+        }
+        const hasKeyAfter = nextIdx < tokens.length && tokens[nextIdx].type === 'key';
+        const finalKey = hasKeyAfter ? tokens[nextIdx].key : null;
+
+        // 递归搜索所有匹配的节点
+        function deepCollect(node, key, filters, lastKey) {
+          const res = [];
+          if (node === null || typeof node !== 'object') return res;
+
+          if (Array.isArray(node)) {
+            for (const item of node) res.push(...deepCollect(item, key, filters, lastKey));
+          } else {
+            for (const k of Object.keys(node)) {
+              const v = node[k];
+              if (k === key) {
+                // 找到目标键，检查是否是数组需要过滤
+                if (Array.isArray(v)) {
+                  let filtered = v;
+                  // 应用所有条件过滤
+                  for (const cond of filters) {
+                    filtered = filtered.filter(item => matchCondition(item, cond));
+                  }
+                  // 如果有最后的 .key，取该属性
+                  if (lastKey) {
+                    for (const item of filtered) {
+                      if (item !== null && typeof item === 'object' && lastKey in item) {
+                        res.push(item[lastKey]);
+                      }
+                    }
+                  } else {
+                    res.push(...filtered);
+                  }
+                } else if (filters.length === 0) {
+                  // 非数组且无过滤条件，直接返回
+                  if (lastKey) {
+                    if (v !== null && typeof v === 'object' && lastKey in v) {
+                      res.push(v[lastKey]);
+                    }
+                  } else {
+                    res.push(v);
+                  }
                 }
-              } else if (node !== null && typeof node === 'object') {
-                for (const v of Object.values(node)) arr.push(...collectAll(v));
               }
-              return arr;
+              // 递归搜索子节点
+              res.push(...deepCollect(v, key, filters, lastKey));
             }
-            for (const node of current) next.push(...collectAll(node));
           }
+          return res;
+        }
+
+        const searchKey = token.key || (token.expr ? token.expr.slice(1, -1) : null);
+        for (const node of current) {
+          if (token.key) {
+            next.push(...deepCollect(node, token.key, chainFilters, finalKey));
+          } else if (token.expr) {
+            // $..[?(...)] 形式 - 递归搜索所有数组元素
+            const inner = token.expr.slice(1, -1);
+            if (inner.startsWith('?(') && inner.endsWith(')')) {
+              const cond = inner.slice(2, -1);
+              function collectAllArrays(n) {
+                const arr = [];
+                if (Array.isArray(n)) {
+                  for (const item of n) {
+                    if (matchCondition(item, cond)) arr.push(item);
+                    arr.push(...collectAllArrays(item));
+                  }
+                } else if (n !== null && typeof n === 'object') {
+                  for (const v of Object.values(n)) arr.push(...collectAllArrays(v));
+                }
+                return arr;
+              }
+              next.push(...collectAllArrays(node));
+            }
+          }
+        }
+
+        // 跳过已处理的 filter 和 key tokens
+        if (chainFilters.length > 0 || finalKey) {
+          ti = nextIdx - (finalKey ? 0 : 0);
+          if (finalKey) ti = nextIdx;
+          else ti = nextIdx - 1;
         }
       }
 
