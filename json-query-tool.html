@@ -501,7 +501,17 @@ function copyText(text, btn) {
     setTimeout(() => { btn.textContent = o; btn.style.background = ''; }, 1200);
   });
 }
-function sk(key) { return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? '.' + key : "['" + key.replace(/'/g, "\\'") + "']"; }
+function sk(key) {
+  // 支持嵌套路径，如 data.pagerows 变为 .data.pagerows
+  if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key)) {
+    return '.' + key;
+  }
+  // 如果 key 包含点，则拆分成链式访问
+  if (key.includes('.')) {
+    return '.' + key; // 直接返回 .data.pagerows，让 tokenize 去处理
+  }
+  return "['" + key.replace(/'/g, "\\'") + "']";
+}
 function ffv(v) {
   if (v === 'true' || v === 'false') return v;
   if (!isNaN(Number(v)) && v !== '') return v;
