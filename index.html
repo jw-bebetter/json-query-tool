@@ -275,7 +275,13 @@
     background: #fff;
     border-bottom: 1px solid #f0f0f0;
   }
-  .reverse-search.active { display: block; }
+  .reverse-search.active {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
   .reverse-search-row {
     display: flex;
     gap: 8px;
@@ -298,8 +304,14 @@
   .reverse-search-row .search-label {
     flex-shrink: 0;
   }
-  .reverse-result {
+  #reverseResult {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    display: none;
     margin-top: 12px;
+  }
+  .reverse-result {
     padding: 12px;
     background: #f6ffed;
     border: 1px solid #b7eb8f;
@@ -495,11 +507,57 @@ function fv(v) {
   if (typeof v === 'object') return '<span style="color:#888">{Object}</span>';
   return escH(String(v));
 }
-function copyText(text, btn) {
-  navigator.clipboard.writeText(text).then(() => {
-    const o = btn.textContent; btn.textContent = '\u2705 已复制'; btn.style.background = '#52c41a';
-    setTimeout(() => { btn.textContent = o; btn.style.background = ''; }, 1200);
-  });
+/** 使用隐藏文本框执行兼容性复制，并返回是否成功。 */
+function fallbackCopyText(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = String(text);
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (_) {
+    copied = false;
+  }
+  textarea.remove();
+  return copied;
+}
+
+/** 优先使用 Clipboard API，失败时回退到兼容性复制。 */
+async function writeClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(String(text));
+      return true;
+    } catch (_) {
+      // iframe 或浏览器权限策略可能拒绝 Clipboard API，继续执行兼容方案。
+    }
+  }
+  return fallbackCopyText(text);
+}
+
+/** 复制查询结果中的 JSONPath，并更新按钮反馈。 */
+async function copyText(text, btn) {
+  const copied = await writeClipboard(text);
+  if (!copied) {
+    showStatus('error', '复制失败，请检查浏览器剪贴板权限');
+    return;
+  }
+  const originalText = btn?.textContent || '';
+  if (btn) {
+    btn.textContent = '\u2705 已复制';
+    btn.style.background = '#52c41a';
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.style.background = '';
+    }, 1200);
+  }
 }
 function sk(key) {
   // 支持嵌套路径，如 data.pagerows 变为 .data.pagerows
@@ -860,15 +918,19 @@ function applyFilter() {
 function switchTab(tab) {
   document.querySelectorAll('.search-tab').forEach(t => t.classList.remove('active'));
   document.getElementById('tab' + (tab === 'value' ? 'Value' : 'Reverse')).classList.add('active');
-  
+  const emptyHint = document.querySelector('.empty-state div:last-child');
+  const resultScroll = document.querySelector('.result-scroll');
+
   if (tab === 'value') {
     document.getElementById('valueSearch').style.display = 'block';
     document.getElementById('reverseSearch').classList.remove('active');
-    document.querySelector('.empty-state div:last-child').textContent = '输入 Value 查询其 JSONPath 路径';
+    if (resultScroll) resultScroll.style.display = '';
+    if (emptyHint) emptyHint.textContent = '输入 Value 查询其 JSONPath 路径';
   } else {
     document.getElementById('valueSearch').style.display = 'none';
     document.getElementById('reverseSearch').classList.add('active');
-    document.querySelector('.empty-state div:last-child').textContent = '输入 JSONPath 查询对应的值';
+    if (resultScroll) resultScroll.style.display = 'none';
+    if (emptyHint) emptyHint.textContent = '输入 JSONPath 查询对应的值';
   }
 }
 
@@ -953,16 +1015,19 @@ function toggleTreeNode(path) {
   renderTree();
 }
 
-function selectTreeNode(path) {
+/** 选中树节点、复制对应 JSONPath 并显示操作结果。 */
+async function selectTreeNode(path) {
   selectedPath = path;
   document.getElementById('treePathBar').style.display = 'block';
   document.getElementById('treePathBar').textContent = path;
   renderTree();
-  
-  // 复制到剪贴板
-  navigator.clipboard.writeText(path).then(() => {
-    showStatus('success', '路径已复制: ' + path);
-  });
+
+  // 选中树节点时复制路径，并明确反馈复制结果。
+  const copied = await writeClipboard(path);
+  showStatus(
+    copied ? 'success' : 'error',
+    copied ? '路径已复制: ' + path : '复制失败，请检查浏览器剪贴板权限'
+  );
 }
 
 // ======== 反向查询功能 ========
@@ -1324,6 +1389,69 @@ function highlightInJSON(value) {
     textarea.setSelectionRange(index, index + searchVal.length);
   }
 }
+
+// ======== 工作区状态导入 / 导出（供同源父页面持久化）========
+window.JsonQueryWorkspace = {
+  /** 导出当前查询上下文，动态结果可根据这些条件重新计算。 */
+  exportState() {
+    const conditions = [...document.querySelectorAll('#conditionRows .condition-row')].map(row => ({
+      key: row.querySelector('.cond-key')?.value || '',
+      value: row.querySelector('.cond-val')?.value || '',
+    }));
+    return {
+      json: document.getElementById('jsonInput').value,
+      searchValue: document.getElementById('searchValue').value,
+      reversePath: document.getElementById('reversePath').value,
+      activeTab: document.getElementById('tabReverse').classList.contains('active') ? 'reverse' : 'value',
+      conditions,
+      treeOpen: document.getElementById('treePanel').classList.contains('active'),
+      treeExpanded: [...treeExpanded],
+      selectedPath,
+      jsonScrollTop: document.getElementById('jsonInput').scrollTop,
+      resultScrollTop: document.getElementById('resultArea').scrollTop,
+      treeScrollTop: document.getElementById('treeContent').scrollTop,
+    };
+  },
+
+  /** 恢复查询上下文并重新生成查询结果、条件行和树形视图。 */
+  importState(state = {}) {
+    document.getElementById('jsonInput').value = state.json || '';
+    document.getElementById('searchValue').value = state.searchValue || '';
+    document.getElementById('reversePath').value = state.reversePath || '';
+    if (state.json) validateJSON(true);
+
+    const activeTab = state.activeTab === 'reverse' ? 'reverse' : 'value';
+    if (state.searchValue) {
+      doSearch();
+      const conditions = Array.isArray(state.conditions) ? state.conditions : [];
+      conditions.forEach((condition, index) => {
+        if (index > 0) addConditionRow();
+        const row = document.querySelectorAll('#conditionRows .condition-row')[index];
+        if (!row) return;
+        const select = row.querySelector('.cond-key');
+        select.value = condition.key || '';
+        onCondKeyChange(select);
+        row.querySelector('.cond-val').value = condition.value || '';
+      });
+      if (conditions.some(condition => condition.key && condition.value)) applyFilter();
+    }
+    switchTab(activeTab);
+    if (activeTab === 'reverse' && state.reversePath) doReverseSearch();
+
+    treeExpanded = new Set(Array.isArray(state.treeExpanded) && state.treeExpanded.length ? state.treeExpanded : ['$']);
+    selectedPath = state.selectedPath || null;
+    const treePanel = document.getElementById('treePanel');
+    const main = document.querySelector('.main');
+    treePanel.classList.toggle('active', Boolean(state.treeOpen));
+    main.classList.toggle('tree-open', Boolean(state.treeOpen));
+    if (state.treeOpen && parsedJSON) renderTree();
+    requestAnimationFrame(() => {
+      document.getElementById('jsonInput').scrollTop = Number(state.jsonScrollTop || 0);
+      document.getElementById('resultArea').scrollTop = Number(state.resultScrollTop || 0);
+      document.getElementById('treeContent').scrollTop = Number(state.treeScrollTop || 0);
+    });
+  },
+};
 
 // ======== 监听用户手动输入，重置 originalJSON ========
 const textarea = document.getElementById('jsonInput');
